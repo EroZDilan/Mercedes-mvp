@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic
+pydantic-settings
+python-jose[cryptography]
+bcrypt
+python-multipart
+apscheduler
+langchain
+langchain-groq
+httpx
+slowapi

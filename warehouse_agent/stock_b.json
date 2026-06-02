@@ -1,0 +1,53 @@
+[
+  {
+    "product_code": "P001",
+    "product_name": "Filtro de aceite",
+    "type": "cantidad",
+    "category": "Filtros",
+    "quantity": 14,
+    "min_quantity": 10,
+    "unit": "unidad",
+    "location": "Rack 1-A",
+    "status": "disponible"
+  },
+  {
+    "product_code": "P005",
+    "product_name": "Pastillas de freno",
+    "type": "cantidad",
+    "category": "Frenos",
+    "quantity": 0,
+    "min_quantity": 8,
+    "unit": "juego",
+    "location": "Rack 2-B",
+    "status": "dado_de_baja"
+  },
+  {
+    "product_code": "P006",
+    "product_name": "Amortiguador delantero",
+    "type": "cantidad",
+    "category": "Suspensión",
+    "quantity": 6,
+    "min_quantity": 2,
+    "unit": "unidad",
+    "location": "Zona E",
+    "status": "disponible"
+  },
+  {
+    "product_code": "COMP-2T",
+    "product_name": "Compresor 2 toneladas",
+    "type": "serie_unica",
+    "serial_number": "SN-3001",
+    "category": "Compresores",
+    "location": "Zona F",
+    "status": "disponible"
+  },
+  {
+    "product_code": "COMP-2T",
+    "product_name": "Compresor 2 toneladas",
+    "type": "serie_unica",
+    "serial_number": "SN-3002",
+    "category": "Compresores",
+    "location": "Zona F",
+    "status": "disponible"
+  }
+]

@@ -1,0 +1,75 @@
+[
+  {
+    "product_code": "P001",
+    "product_name": "Filtro de aceite",
+    "type": "cantidad",
+    "category": "Filtros",
+    "quantity": 50,
+    "min_quantity": 10,
+    "unit": "unidad",
+    "location": "Estante B-3",
+    "status": "disponible"
+  },
+  {
+    "product_code": "P002",
+    "product_name": "Correa de distribución",
+    "type": "cantidad",
+    "category": "Motor",
+    "quantity": 4,
+    "min_quantity": 5,
+    "unit": "unidad",
+    "location": "Estante A-1",
+    "status": "disponible"
+  },
+  {
+    "product_code": "P003",
+    "product_name": "Bujías NGK",
+    "type": "cantidad",
+    "category": "Encendido",
+    "quantity": 3,
+    "min_quantity": 10,
+    "unit": "juego",
+    "location": "Estante C-2",
+    "status": "disponible"
+  },
+  {
+    "product_code": "P004",
+    "product_name": "Aceite motor 5W30",
+    "type": "cantidad",
+    "category": "Lubricantes",
+    "quantity": 18,
+    "min_quantity": 5,
+    "unit": "litro",
+    "location": "Zona D",
+    "status": "disponible"
+  },
+  {
+    "product_code": "P007",
+    "product_name": "Filtro hidráulico",
+    "type": "cantidad",
+    "category": "Filtros",
+    "quantity": 15,
+    "min_quantity": 3,
+    "unit": "unidad",
+    "location": "Estante D-4",
+    "status": "disponible"
+  },
+  {
+    "product_code": "ME-5HP",
+    "product_name": "Motor eléctrico 5HP",
+    "type": "serie_unica",
+    "serial_number": "SN-2041",
+    "category": "Motores",
+    "location": "Zona C",
+    "status": "disponible"
+  },
+  {
+    "product_code": "ME-5HP",
+    "product_name": "Motor eléctrico 5HP",
+    "type": "serie_unica",
+    "serial_number": "SN-2042",
+    "category": "Motores",
+    "location": "Zona C",
+    "status": "disponible"
+  }
+]
