@@ -8,6 +8,7 @@ bcrypt
 python-multipart
 apscheduler
 langchain
+langchain-openai
 langchain-groq
 langchain-google-genai
 httpx
