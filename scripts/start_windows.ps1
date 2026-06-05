@@ -36,6 +36,19 @@ if (-not (Test-Path "$root\.env")) {
     Read-Host "Presiona Enter cuando hayas configurado el .env"
 }
 
+# Inicializar DB si no existe
+$dbFile = "$root\stock_chatbot.db"
+if (-not (Test-Path $dbFile)) {
+    Write-Host "Inicializando base de datos..." -ForegroundColor Yellow
+    Set-Location $root
+    & "$root\.venv\Scripts\python.exe" -m backend.seed
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: El seed fallo. Revisa los logs." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "Base de datos lista." -ForegroundColor Green
+}
+
 # Arrancar backend en ventana nueva
 Write-Host "Arrancando backend en http://localhost:$BackendPort ..." -ForegroundColor Green
 $backendCmd = "cd '$root'; .venv\Scripts\Activate.ps1; uvicorn backend.main:app --host 0.0.0.0 --port $BackendPort --reload; Read-Host 'Backend detenido. Enter para cerrar'"
