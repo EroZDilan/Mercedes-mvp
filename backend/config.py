@@ -8,6 +8,13 @@ class Settings(BaseSettings):
     refresh_token_expire_hours: int = 8
 
     groq_api_key: str = ""
+    gemini_api_key: str = ""
+    anthropic_api_key: str = ""
+    deepseek_api_key: str = ""
+    openrouter_api_key: str = ""
+
+    ollama_base_url: str = ""
+    ollama_model: str = "qwen2.5:7b"
 
     warehouse_a_id: str = "ALM-A"
     warehouse_a_name: str = "Almacén Norte"

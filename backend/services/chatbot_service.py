@@ -1,10 +1,10 @@
-"""Chatbot service — LangChain + Groq, filtrado por rol."""
+"""Chatbot service — LangChain + DeepSeek, filtrado por rol."""
 import json
 import time
 import uuid
 from datetime import datetime, UTC
 from sqlalchemy.orm import Session
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from backend import models
 from backend.config import settings
@@ -152,13 +152,24 @@ def ask(
         messages.append(AIMessage(content=h.response))
     messages.append(HumanMessage(content=question))
 
-    # Call LLM
+    # Call LLM — Ollama (local) tiene prioridad si OLLAMA_BASE_URL está configurado
     try:
-        llm = ChatGroq(
-            model="llama-3.3-70b-versatile",
-            api_key=settings.groq_api_key,
-            temperature=0.1,
-        )
+        if settings.ollama_base_url:
+            llm = ChatOpenAI(
+                model=settings.ollama_model,
+                api_key="ollama",
+                base_url=settings.ollama_base_url.rstrip("/") + "/v1",
+                temperature=0.1,
+                max_tokens=1024,
+            )
+        else:
+            llm = ChatOpenAI(
+                model="moonshotai/kimi-k2.6:free",
+                api_key=settings.openrouter_api_key,
+                base_url="https://openrouter.ai/api/v1",
+                temperature=0.1,
+                max_tokens=1024,
+            )
         llm_response = llm.invoke(messages)
         answer = llm_response.content
     except Exception:

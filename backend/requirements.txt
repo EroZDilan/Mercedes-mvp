@@ -9,5 +9,6 @@ python-multipart
 apscheduler
 langchain
 langchain-groq
+langchain-google-genai
 httpx
 slowapi

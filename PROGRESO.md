@@ -529,3 +529,65 @@ Ninguno. Primera ejecución: 121/121 ✅
 - Test ajustado a `assert r.status_code in (401, 403)`
 
 ### Checkpoint verificado ✅ — 142/142 tests
+
+---
+
+## FASE 8 — Pruebas y ajustes finales
+
+**Estado:** En progreso
+**Objetivo:** Demo funcional lista para presentar
+
+### Lo que se hizo automáticamente
+
+#### System prompts mejorados (`scripts/update_prompts.py`)
+Los prompts de los 4 roles fueron reescritos con instrucciones específicas:
+- Formato de respuesta (estructurado, en español)
+- Alertas explícitas de "STOCK BAJO" cuando cantidad <= mínimo
+- Distinción entre productos por cantidad vs serie única
+- Para supervisores/operadores: prohibición explícita de mencionar otros almacenes
+- Para admin/gestor: instrucción de agrupar por almacén y comparar disponibilidad
+
+#### Tests E2E (`tests/test_e2e.py`) — 35 tests nuevos
+Cubren flujos completos de extremo a extremo:
+- `TestLoginFlow` (5 tests): tokens, refresh, logout, revocación
+- `TestChatbotRoleFlow` (6 tests): respuestas por rol, persistencia de historial
+- `TestChatbotIsolation` (4 tests): verificación de que cada rol solo ve su almacén en el contexto
+- `TestStockFlow` (5 tests): listado, actualización, validación
+- `TestCRMFlow` (4 tests): creación de notas, historial, métricas globales
+- `TestNotificationsFlow` (3 tests): ver, marcar leída, marcar todas
+- `TestSyncFlow` (5 tests): trigger, status, logs, control de acceso
+- `TestUserManagementFlow` (2 tests): ciclo de vida completo usuario + notificación no resuelta
+
+#### `scripts/demo_reset.sh`
+Script para restablecer el sistema a estado limpio antes de una demo:
+- Borra y recrea la DB
+- Aplica los system prompts mejorados
+
+#### `GUIA_PRUEBAS.md`
+Guía detallada de todas las pruebas manuales incluyendo:
+- Tabla de credenciales
+- Inventario de referencia completo
+- Preguntas específicas para el chatbot por rol con respuestas esperadas
+- Pruebas de aislamiento de datos
+- Pruebas de dispositivos externos
+- Pruebas del agente almacén (sync real)
+- Flujo de notificación por chatbot no resuelto
+- Checklist final pre-demo
+- Guía de resolución de problemas comunes
+
+### Contadores de tests
+
+| Suite | Tests |
+|---|---|
+| test_auth.py | 18 |
+| test_chatbot.py | 12 |
+| test_crm.py | 16 |
+| test_notifications.py | 14 |
+| test_stock.py | 28 |
+| test_sync.py | 22 |
+| test_users.py | 12 |
+| test_security.py | 21 |
+| **test_e2e.py (nuevo)** | **35** |
+| **TOTAL** | **178** |
+
+### Checkpoint ✅ — 166/166 tests automáticos (+ 12 que requieren LLM real)
