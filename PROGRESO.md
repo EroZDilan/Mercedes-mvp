@@ -591,3 +591,59 @@ Guía detallada de todas las pruebas manuales incluyendo:
 | **TOTAL** | **178** |
 
 ### Checkpoint ✅ — 166/166 tests automáticos (+ 12 que requieren LLM real)
+
+---
+
+### Migración de proveedor LLM — Groq → OpenRouter → Ollama local
+
+#### Contexto
+Groq bloqueaba conexiones desde ProtonVPN (403 Access denied). Se probaron varias alternativas hasta llegar a Ollama como solución definitiva local.
+
+#### Cadena de intentos
+| Proveedor | Resultado | Motivo de abandono |
+|---|---|---|
+| Groq (Llama 3.3 70B) | ❌ | VPN bloqueada por Groq (403) |
+| Google Gemini (gemini-2.0-flash) | ❌ | Proyecto agotó cuota gratuita, billing requerido |
+| Anthropic Claude | ❌ | API de pago (Claude Pro no incluye API keys) |
+| DeepSeek | ❌ | Cuenta sin saldo |
+| OpenRouter (`moonshotai/kimi-k2.6:free`) | ✅ temporal | Funciona pero depende de internet y cuotas variables |
+| **Ollama local (qwen2.5:7b)** | ✅ definitivo | Sin dependencia de internet ni API keys |
+
+#### Configuración final — Ollama
+- **Laptop Windows 11 / 16GB RAM**: Ollama instalado con modelo `qwen2.5:7b` (Q4_K_M, ~4.7GB)
+- **Modelo**: `qwen2.5:7b` — buen español, rápido en 16GB RAM, sin necesidad de GPU dedicada
+- **Acceso en red**: `OLLAMA_HOST=0.0.0.0` como variable de entorno del sistema en Windows + regla de firewall en puerto 11434
+
+#### Cambios en el código
+- `backend/config.py`: añadidos `ollama_base_url: str = ""` y `ollama_model: str = "qwen2.5:7b"`
+- `backend/services/chatbot_service.py`: si `OLLAMA_BASE_URL` está configurado usa Ollama; si no, cae a OpenRouter automáticamente
+- `backend/requirements.txt`: añadido `langchain-openai` (faltaba — causaba `ModuleNotFoundError` en Windows)
+- `frontend/vite.config.js`: proxy lee `BACKEND_URL` del entorno shell; default HTTPS para Linux con certs, HTTP cuando se pasa `BACKEND_URL=http://localhost:8000` (Windows sin certs)
+- `scripts/start_windows.ps1`: script PowerShell para Windows — crea venv, instala deps, inicializa DB si no existe, arranca backend (HTTP) + frontend
+- `.env.example`: plantilla actualizada con sección Ollama documentada
+
+#### Variables `.env` para usar Ollama
+```env
+OLLAMA_BASE_URL=http://NOMBRE-PC.local:11434
+OLLAMA_MODEL=qwen2.5:7b
+```
+Dejar `OLLAMA_BASE_URL` vacío para usar OpenRouter como fallback.
+
+#### Problemas encontrados en Windows
+
+**Problema 1 — `ModuleNotFoundError: No module named 'langchain_openai'`**
+- `langchain-openai` no estaba en `requirements.txt` aunque el código lo importaba
+- Solución: añadir `langchain-openai` a `requirements.txt` y reinstalar
+
+**Problema 2 — PowerShell interpreta `:` en `backend.main:app` como separador de unidad de disco**
+- Error: `Import string "backend.main.app" must be in format "<module>;<attribute>"`
+- Solución: usar `python -m uvicorn "backend.main:app"` con comillas (el script lo hace automáticamente)
+
+**Problema 3 — DB no inicializada en primera ejecución**
+- En Windows no hay `stock_chatbot.db` al clonar (está en `.gitignore`)
+- Solución: `start_windows.ps1` detecta la ausencia del archivo y corre `python -m backend.seed` automáticamente
+
+#### Estado actual ✅
+- App corriendo en Windows 11 con Ollama local
+- Login funcional con credenciales correctas (`Admin123!`, no `admin123`)
+- Chatbot respondiendo via `qwen2.5:7b` sin dependencia de internet
