@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import api from '../api/client'
 import { useAuth } from '../context/AuthContext'
+import ActionConfirm from '../components/ActionConfirm'
 
 const SESSION_KEY = 'chat_session_id'
 
@@ -8,14 +9,30 @@ function genSessionId() {
   return 'sess-' + Math.random().toString(36).slice(2) + Date.now().toString(36)
 }
 
-function MessageBubble({ msg }) {
+function MessageBubble({ msg, onConfirmed, onCancelled }) {
   const isUser = msg.role === 'user'
+
+  if (msg.role === 'action_pending') {
+    return (
+      <div className="flex justify-start mb-3">
+        <ActionConfirm
+          summary={msg.summary}
+          actionToken={msg.actionToken}
+          onConfirmed={onConfirmed}
+          onCancelled={onCancelled}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-3`}>
       <div
         className={`max-w-[80%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
           isUser
             ? 'bg-indigo-600 text-white rounded-br-sm'
+            : msg.isSuccess
+            ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 rounded-bl-sm border border-green-200 dark:border-green-800'
             : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-bl-sm'
         }`}
       >
@@ -64,14 +81,55 @@ export default function Chat() {
         message: text,
         session_id: sessionId,
       })
-      setMessages((prev) => [...prev, { role: 'assistant', content: data.response, response_time_ms: data.response_time_ms }])
-      // refresh history sidebar
+
+      if (data.type === 'action_pending') {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'action_pending',
+            id: Date.now(),
+            summary: data.summary,
+            actionToken: data.action_token,
+            response_time_ms: data.response_time_ms,
+          },
+        ])
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: data.response, response_time_ms: data.response_time_ms },
+        ])
+      }
+
       api.get('/chatbot/history').then(({ data }) => setHistory(data)).catch(() => {})
     } catch {
-      setMessages((prev) => [...prev, { role: 'assistant', content: 'Error al conectar con el servidor.' }])
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: 'Error al conectar con el servidor.' },
+      ])
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleActionConfirmed = (msgId, resultMsg) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msgId
+          ? { role: 'assistant', content: `✓ ${resultMsg}`, isSuccess: true }
+          : m
+      )
+    )
+    api.get('/chatbot/history').then(({ data }) => setHistory(data)).catch(() => {})
+  }
+
+  const handleActionCancelled = (msgId) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msgId
+          ? { role: 'assistant', content: 'Acción cancelada. ¿En qué más puedo ayudarte?' }
+          : m
+      )
+    )
   }
 
   const loadSession = async (sid) => {
@@ -107,7 +165,12 @@ export default function Chat() {
             >
               <p className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate">{h.question}</p>
               <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
-                {new Date(h.timestamp).toLocaleDateString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                {new Date(h.timestamp).toLocaleDateString('es', {
+                  day: '2-digit',
+                  month: 'short',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
               </p>
             </button>
           ))}
@@ -134,11 +197,18 @@ export default function Chat() {
             <div className="flex flex-col items-center justify-center h-full text-center">
               <div className="text-4xl mb-3">🤖</div>
               <p className="text-gray-500 dark:text-gray-400 text-sm max-w-xs">
-                Hola {user?.username}, pregúntame sobre el stock del almacén.
+                Hola {user?.username}, pregúntame sobre el stock del almacén o pide que realice una acción.
               </p>
             </div>
           )}
-          {messages.map((msg, i) => <MessageBubble key={i} msg={msg} />)}
+          {messages.map((msg, i) => (
+            <MessageBubble
+              key={i}
+              msg={msg}
+              onConfirmed={(resultMsg) => handleActionConfirmed(msg.id, resultMsg)}
+              onCancelled={() => handleActionCancelled(msg.id)}
+            />
+          ))}
           {loading && (
             <div className="flex justify-start mb-3">
               <div className="bg-gray-100 dark:bg-gray-800 px-4 py-2.5 rounded-2xl rounded-bl-sm">
@@ -149,11 +219,14 @@ export default function Chat() {
           <div ref={bottomRef} />
         </div>
 
-        <form onSubmit={sendMessage} className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex gap-2">
+        <form
+          onSubmit={sendMessage}
+          className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex gap-2"
+        >
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Escribe tu pregunta…"
+            placeholder="Escribe tu pregunta o acción…"
             className="flex-1 px-4 py-2 rounded-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             disabled={loading}
           />

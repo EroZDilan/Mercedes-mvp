@@ -156,3 +156,27 @@ class AuditLog(Base):
     detail = Column(Text)
     ip_address = Column(String)
     timestamp = Column(DateTime, default=lambda: datetime.now(UTC))
+
+
+class ActionLog(Base):
+    __tablename__ = "action_log"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    action_type = Column(String, nullable=False)
+    target_type = Column(String, nullable=False)
+    target_id = Column(Integer, nullable=True)
+    action_detail = Column(Text, nullable=False)
+    confirmed_at = Column(DateTime, nullable=True)
+    executed_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    status = Column(String, default="success")
+
+
+class ActionToken(Base):
+    __tablename__ = "action_tokens"
+    id = Column(Integer, primary_key=True)
+    token = Column(String, unique=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    action_data = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, default=False)

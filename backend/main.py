@@ -7,7 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from backend.config import settings
 from backend.database import engine, Base
 from backend.middleware.rate_limiter import limiter
-from backend.routers import auth, sync, chatbot, stock, users, notifications, crm
+from backend.routers import auth, sync, chatbot, stock, users, notifications, crm, actions
 
 Base.metadata.create_all(bind=engine)
 
@@ -49,6 +49,7 @@ app.include_router(stock.router)
 app.include_router(users.router)
 app.include_router(notifications.router)
 app.include_router(crm.router)
+app.include_router(actions.router)
 
 
 @app.get("/health")

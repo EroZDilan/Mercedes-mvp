@@ -51,7 +51,7 @@ if (-not (Test-Path $dbFile)) {
 
 # Arrancar backend en ventana nueva
 Write-Host "Arrancando backend en http://localhost:$BackendPort ..." -ForegroundColor Green
-$backendCmd = "cd '$root'; .venv\Scripts\Activate.ps1; uvicorn backend.main:app --host 0.0.0.0 --port $BackendPort --reload; Read-Host 'Backend detenido. Enter para cerrar'"
+$backendCmd = "cd '$root'; .venv\Scripts\Activate.ps1; python -m uvicorn 'backend.main:app' --host 0.0.0.0 --port $BackendPort --reload; Read-Host 'Backend detenido. Enter para cerrar'"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", $backendCmd
 
 # Esperar a que el backend levante

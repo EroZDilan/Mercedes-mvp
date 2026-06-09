@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     allowed_origin: str = "http://localhost:3000"
     login_rate_limit: str = "10/minute"
 
+    action_token_ttl_seconds: int = 60
+
     database_url: str = "sqlite:///./stock_chatbot.db"
 
     class Config:

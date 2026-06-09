@@ -21,6 +21,8 @@ def send_message(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Returns {"type": "query", "response": ...}
+    # or      {"type": "action_pending", "summary": ..., "action_token": ...}
     return chatbot_service.ask(db, current_user, body.message, body.session_id)
 
 
