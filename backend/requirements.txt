@@ -13,3 +13,4 @@ langchain-groq
 langchain-google-genai
 httpx
 slowapi
+faster-whisper

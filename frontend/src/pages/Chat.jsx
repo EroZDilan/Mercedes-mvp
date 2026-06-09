@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import api from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import ActionConfirm from '../components/ActionConfirm'
+import AudioRecorder from '../components/AudioRecorder'
 
 const SESSION_KEY = 'chat_session_id'
 
@@ -221,12 +222,16 @@ export default function Chat() {
 
         <form
           onSubmit={sendMessage}
-          className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex gap-2"
+          className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex gap-2 items-center"
         >
+          <AudioRecorder
+            onTranscribed={(text) => setInput((prev) => (prev ? prev + ' ' + text : text))}
+            disabled={loading}
+          />
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Escribe tu pregunta o acción…"
+            placeholder="Escribe o dicta tu pregunta…"
             className="flex-1 px-4 py-2 rounded-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             disabled={loading}
           />
