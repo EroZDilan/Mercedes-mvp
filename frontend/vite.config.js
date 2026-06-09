@@ -18,6 +18,8 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api/, ''),
         secure: false,
         changeOrigin: true,
+        proxyTimeout: 180000,  // 3 min — Ollama puede tardar en responder
+        timeout: 180000,
       },
     },
   },

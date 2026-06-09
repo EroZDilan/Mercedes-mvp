@@ -1,5 +1,6 @@
 """Chatbot service — tool calling agent + action confirmation flow."""
 import json
+import logging
 import time
 import uuid
 from datetime import UTC, datetime
@@ -12,6 +13,8 @@ from backend import models
 from backend.config import settings
 from backend.services.action_service import build_confirmation_summary, create_action_token
 from backend.tools.tool_registry import get_tools_for_user
+
+logger = logging.getLogger(__name__)
 
 UNRESOLVED_PHRASES = [
     "no tengo información",
@@ -185,8 +188,24 @@ def ask(db: Session, user: models.User, question: str, session_id: str | None = 
 
     try:
         answer = _run_agent(llm_with_tools, tools, messages, action_holder)
-    except Exception:
-        answer = "El servicio de IA no está disponible en este momento. Intenta de nuevo más tarde."
+    except Exception as exc:
+        logger.error("LLM call failed (%s): %s", type(exc).__name__, exc)
+        err_str = str(exc).lower()
+        if "memory" in err_str or "oom" in err_str or "out of memory" in err_str:
+            answer = (
+                "⚠️ El modelo de IA no tiene suficiente memoria RAM disponible. "
+                "Cierra otras aplicaciones (navegador, VS Code, etc.) y vuelve a intentarlo."
+            )
+        elif "connection" in err_str or "refused" in err_str or "connect" in err_str:
+            answer = (
+                "⚠️ No se puede conectar con Ollama. "
+                "Verifica que Ollama esté corriendo en tu máquina (ollama serve)."
+            )
+        else:
+            answer = (
+                f"⚠️ El servicio de IA no está disponible: {type(exc).__name__}. "
+                "Revisa los logs del backend para más detalles."
+            )
 
     elapsed_ms = int((time.time() - start) * 1000)
 

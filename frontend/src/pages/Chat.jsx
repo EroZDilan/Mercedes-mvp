@@ -59,11 +59,27 @@ export default function Chat() {
   const [history, setHistory] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
   const [showHistory, setShowHistory] = useState(false)
   const bottomRef = useRef(null)
+  const timerRef = useRef(null)
 
+  // Cargar historial del sidebar y restaurar mensajes de la sesión actual
   useEffect(() => {
-    api.get('/chatbot/history').then(({ data }) => setHistory(data)).catch(() => {})
+    api.get('/chatbot/history').then(({ data }) => {
+      setHistory(data)
+      // Restaurar mensajes de la sesión activa si hay entradas en el historial
+      const sessionMsgs = data.filter((h) => h.session_id === sessionId)
+      if (sessionMsgs.length > 0) {
+        const restored = sessionMsgs
+          .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+          .flatMap((h) => [
+            { role: 'user', content: h.question },
+            { role: 'assistant', content: h.response, response_time_ms: h.response_time_ms },
+          ])
+        setMessages(restored)
+      }
+    }).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -77,6 +93,8 @@ export default function Chat() {
     setInput('')
     setMessages((prev) => [...prev, { role: 'user', content: text }])
     setLoading(true)
+    setElapsed(0)
+    timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000)
     try {
       const { data } = await api.post('/chatbot/message', {
         message: text,
@@ -108,7 +126,9 @@ export default function Chat() {
         { role: 'assistant', content: 'Error al conectar con el servidor.' },
       ])
     } finally {
+      clearInterval(timerRef.current)
       setLoading(false)
+      setElapsed(0)
     }
   }
 
@@ -213,7 +233,14 @@ export default function Chat() {
           {loading && (
             <div className="flex justify-start mb-3">
               <div className="bg-gray-100 dark:bg-gray-800 px-4 py-2.5 rounded-2xl rounded-bl-sm">
-                <span className="text-gray-400 dark:text-gray-500 text-sm animate-pulse">Pensando…</span>
+                <span className="text-gray-400 dark:text-gray-500 text-sm animate-pulse">
+                  Pensando… {elapsed > 0 && `(${elapsed}s)`}
+                </span>
+                {elapsed >= 10 && (
+                  <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
+                    El modelo local puede tardar hasta 90s. Por favor espera.
+                  </p>
+                )}
               </div>
             </div>
           )}

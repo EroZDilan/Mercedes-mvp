@@ -1,7 +1,9 @@
 from typing import Optional
+import httpx
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from backend.config import settings
 from backend.database import get_db
 from backend.middleware.auth import get_current_user
 from backend import models, schemas
@@ -13,6 +15,34 @@ router = APIRouter(prefix="/chatbot", tags=["chatbot"])
 class MessageRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
+
+
+@router.get("/health")
+async def chatbot_health():
+    """Diagnóstico: verifica si Ollama está disponible y el modelo cargado."""
+    if not settings.ollama_base_url:
+        return {"provider": "openrouter", "status": "configured", "model": "moonshotai/kimi-k2.6:free"}
+
+    base = settings.ollama_base_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{base}/api/tags")
+            if r.status_code != 200:
+                return {"provider": "ollama", "status": "error", "detail": f"HTTP {r.status_code}"}
+            models_list = [m["name"] for m in r.json().get("models", [])]
+            model_ready = settings.ollama_model in models_list
+            return {
+                "provider": "ollama",
+                "status": "ok" if model_ready else "model_not_found",
+                "model": settings.ollama_model,
+                "available_models": models_list,
+                "base_url": base,
+            }
+    except httpx.ConnectError:
+        return {"provider": "ollama", "status": "unreachable", "base_url": base,
+                "detail": "No se puede conectar a Ollama. ¿Está corriendo?"}
+    except Exception as exc:
+        return {"provider": "ollama", "status": "error", "detail": str(exc)}
 
 
 @router.post("/message")
