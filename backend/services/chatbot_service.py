@@ -22,6 +22,33 @@ UNRESOLVED_PHRASES = [
     "no puedo responder",
 ]
 
+# Keywords that signal the user wants to WRITE/ACT, not just read
+_WRITE_KEYWORDS = {
+    "transf", "mover", "mueve",
+    "crea", "crear", "añade", "añadir", "agrega", "agregar", "nuevo", "nueva",
+    "elimin", "borrar", "borra", "dar de baja",
+    "edita", "editar", "modifica", "modificar", "cambia", "cambiar", "actualiz",
+    "desactiv", "activ", "bloquea", "bloquear",
+    "resetea", "resetear", "contraseña", "password",
+    "crea usuario", "nuevo usuario",
+    "reserva", "reservar", "en reparacion", "en reparación", "dado de baja",
+    "propone", "proponer", "ejecuta", "confirma",
+}
+
+
+def _is_write_query(question: str) -> bool:
+    """Return True if question likely needs write/action tools."""
+    q = question.lower()
+    return any(kw in q for kw in _WRITE_KEYWORDS)
+
+
+def _get_tools(db: Session, user: models.User, action_holder: dict, question: str) -> list:
+    """Return only query tools for read queries; full toolset for write queries."""
+    from backend.tools.query_tools import make_query_tools
+    if _is_write_query(question):
+        return get_tools_for_user(db, user, action_holder)
+    return make_query_tools(db, user)
+
 
 # ── LLM factory ───────────────────────────────────────────────────────────────
 
@@ -175,7 +202,7 @@ def ask(db: Session, user: models.User, question: str, session_id: str | None = 
     start = time.time()
     action_holder: dict = {}
 
-    tools = get_tools_for_user(db, user, action_holder)
+    tools = _get_tools(db, user, action_holder, question)
     llm = _build_llm()
     llm_with_tools = llm.bind_tools(tools)
 
@@ -249,7 +276,7 @@ async def ask_stream(
     start = time.time()
     action_holder: dict = {}
 
-    tools = get_tools_for_user(db, user, action_holder)
+    tools = _get_tools(db, user, action_holder, question)
     llm = _build_llm()
     llm_with_tools = llm.bind_tools(tools)
     tools_by_name = {t.name: t for t in tools}
