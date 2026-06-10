@@ -3,7 +3,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import UTC, datetime
+from typing import AsyncGenerator
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
@@ -68,7 +68,7 @@ def _build_system_prompt(user: models.User, db: Session) -> str:
 
 # ── Agent loop ────────────────────────────────────────────────────────────────
 
-def _run_agent(llm_with_tools, tools: list, messages: list, action_holder: dict, max_iters: int = 8) -> str:
+def _run_agent(llm_with_tools, tools: list, messages: list, action_holder: dict, max_iters: int = 4) -> str:
     tools_by_name = {t.name: t for t in tools}
     msgs = list(messages)
 
@@ -102,7 +102,7 @@ def _run_agent(llm_with_tools, tools: list, messages: list, action_holder: dict,
 
 # ── History helpers ───────────────────────────────────────────────────────────
 
-def get_session_history(db: Session, user_id: int, session_id: str, limit: int = 10) -> list:
+def get_session_history(db: Session, user_id: int, session_id: str, limit: int = 6) -> list:
     return (
         db.query(models.ChatHistory)
         .filter_by(user_id=user_id, session_id=session_id)
@@ -235,3 +235,108 @@ def ask(db: Session, user: models.User, question: str, session_id: str | None = 
         _notify_unresolved(db, user, question)
 
     return {"type": "query", "response": answer, "session_id": session_id, "response_time_ms": elapsed_ms}
+
+
+# ── Streaming public API ──────────────────────────────────────────────────────
+
+async def ask_stream(
+    db: Session, user: models.User, question: str, session_id: str | None = None
+) -> AsyncGenerator[str, None]:
+    """Yield SSE lines. Tool calls run with invoke; final text is streamed token-by-token."""
+    if not session_id:
+        session_id = str(uuid.uuid4())
+
+    start = time.time()
+    action_holder: dict = {}
+
+    tools = get_tools_for_user(db, user, action_holder)
+    llm = _build_llm()
+    llm_with_tools = llm.bind_tools(tools)
+    tools_by_name = {t.name: t for t in tools}
+
+    history = get_session_history(db, user.id, session_id)
+    messages = [SystemMessage(content=_build_system_prompt(user, db))]
+    for h in history:
+        messages.append(HumanMessage(content=h.question))
+        messages.append(AIMessage(content=h.response))
+    messages.append(HumanMessage(content=question))
+
+    msgs = list(messages)
+
+    def _sse(payload: dict) -> str:
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    try:
+        # Phase 1: tool-call iterations (non-streamed, each is pure JSON)
+        for _ in range(3):
+            response = llm_with_tools.invoke(msgs)
+            msgs.append(response)
+
+            if not response.tool_calls:
+                # Model answered directly (no tool needed) — send as single event
+                answer = response.content
+                elapsed_ms = int((time.time() - start) * 1000)
+                _save_history(db, user.id, session_id, question, answer, elapsed_ms)
+                if any(p in answer.lower() for p in UNRESOLVED_PHRASES):
+                    _notify_unresolved(db, user, question)
+                yield _sse({"type": "query", "response": answer,
+                             "session_id": session_id, "response_time_ms": elapsed_ms})
+                return
+
+            # Execute tool calls
+            tool_results: list[ToolMessage] = []
+            for call in response.tool_calls:
+                tool = tools_by_name.get(call["name"])
+                try:
+                    content = str(tool.invoke(call["args"])) if tool else f"Herramienta '{call['name']}' no disponible."
+                except Exception as exc:
+                    content = f"Error: {exc}"
+                tool_results.append(ToolMessage(content=content, tool_call_id=call["id"]))
+                if action_holder.get("action"):
+                    break
+
+            if action_holder.get("action"):
+                action_data = action_holder["action"]
+                summary, is_valid = build_confirmation_summary(db, action_data)
+                elapsed_ms = int((time.time() - start) * 1000)
+                _save_history(db, user.id, session_id, question, summary, elapsed_ms)
+                if not is_valid:
+                    yield _sse({"type": "query", "response": summary,
+                                 "session_id": session_id, "response_time_ms": elapsed_ms})
+                    return
+                token = create_action_token(db, user.id, action_data)
+                yield _sse({"type": "action_pending", "summary": summary,
+                             "action_token": token, "session_id": session_id,
+                             "response_time_ms": elapsed_ms})
+                return
+
+            msgs.extend(tool_results)
+
+        # Phase 2: stream the final LLM response token by token
+        full_answer = ""
+        for chunk in llm.stream(msgs):
+            delta = chunk.content or ""
+            if delta:
+                full_answer += delta
+                yield _sse({"type": "delta", "delta": delta})
+
+        if not full_answer:
+            full_answer = "Lo siento, no pude completar la consulta. Intenta de nuevo."
+            yield _sse({"type": "delta", "delta": full_answer})
+
+        elapsed_ms = int((time.time() - start) * 1000)
+        _save_history(db, user.id, session_id, question, full_answer, elapsed_ms)
+        if any(p in full_answer.lower() for p in UNRESOLVED_PHRASES):
+            _notify_unresolved(db, user, question)
+        yield _sse({"type": "done", "session_id": session_id, "response_time_ms": elapsed_ms})
+
+    except Exception as exc:
+        logger.error("LLM stream failed (%s): %s", type(exc).__name__, exc)
+        err_str = str(exc).lower()
+        if "memory" in err_str or "oom" in err_str or "out of memory" in err_str:
+            msg = "⚠️ Sin memoria RAM suficiente. Cierra otras apps e intenta de nuevo."
+        elif "connection" in err_str or "refused" in err_str or "connect" in err_str:
+            msg = "⚠️ No se puede conectar con Ollama. Verifica que esté corriendo (ollama serve)."
+        else:
+            msg = f"⚠️ Error de IA: {type(exc).__name__}. Revisa los logs del backend."
+        yield _sse({"type": "error", "response": msg, "session_id": session_id or ""})

@@ -15,6 +15,16 @@ export default function AudioRecorder({ onTranscribed, disabled }) {
 
   const start = async () => {
     setError('')
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError(
+        location.protocol === 'https:' || location.hostname === 'localhost'
+          ? 'El navegador no soporta grabación de audio.'
+          : 'El micrófono requiere HTTPS. Accede por localhost o configura SSL.'
+      )
+      return
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const mime = getSupportedMime()
@@ -30,8 +40,14 @@ export default function AudioRecorder({ onTranscribed, disabled }) {
       recorder.start()
       mediaRef.current = recorder
       setRecording(true)
-    } catch {
-      setError('No se pudo acceder al micrófono.')
+    } catch (err) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setError('Permiso de micrófono denegado. Habilítalo en el candado de la barra de URL.')
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        setError('No se encontró ningún micrófono conectado.')
+      } else {
+        setError('No se pudo acceder al micrófono.')
+      }
     }
   }
 

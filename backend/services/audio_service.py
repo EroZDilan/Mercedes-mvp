@@ -1,13 +1,17 @@
-import io
 import tempfile
 import os
 from functools import lru_cache
-from faster_whisper import WhisperModel
 from backend.config import settings
 
 
 @lru_cache(maxsize=1)
-def _get_model() -> WhisperModel:
+def _get_model():
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as e:
+        raise RuntimeError(
+            "faster-whisper no está instalado. Ejecuta: pip install faster-whisper"
+        ) from e
     return WhisperModel(
         settings.whisper_model,
         device="cpu",

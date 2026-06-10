@@ -1,6 +1,7 @@
 from typing import Optional
 import httpx
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from backend.config import settings
@@ -46,14 +47,20 @@ async def chatbot_health():
 
 
 @router.post("/message")
-def send_message(
+async def send_message(
     body: MessageRequest,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # Returns {"type": "query", "response": ...}
-    # or      {"type": "action_pending", "summary": ..., "action_token": ...}
-    return chatbot_service.ask(db, current_user, body.message, body.session_id)
+    """SSE stream. Events: delta | query | action_pending | error | done."""
+    return StreamingResponse(
+        chatbot_service.ask_stream(db, current_user, body.message, body.session_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/history", response_model=list[schemas.ChatHistoryOut])

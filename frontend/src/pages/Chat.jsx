@@ -95,36 +95,89 @@ export default function Chat() {
     setLoading(true)
     setElapsed(0)
     timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000)
+
+    // Placeholder para el mensaje que se va a ir completando con streaming
+    const placeholderId = Date.now()
+    setMessages((prev) => [...prev, { role: 'assistant', content: '', _id: placeholderId, streaming: true }])
+
     try {
-      const { data } = await api.post('/chatbot/message', {
-        message: text,
-        session_id: sessionId,
+      const token = localStorage.getItem('access_token')
+      const resp = await fetch('/api/chatbot/message', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ message: text, session_id: sessionId }),
       })
 
-      if (data.type === 'action_pending') {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: 'action_pending',
-            id: Date.now(),
-            summary: data.summary,
-            actionToken: data.action_token,
-            response_time_ms: data.response_time_ms,
-          },
-        ])
-      } else {
-        setMessages((prev) => [
-          ...prev,
-          { role: 'assistant', content: data.response, response_time_ms: data.response_time_ms },
-        ])
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`)
+      }
+
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      let sessionReceived = sessionId
+      let responseTimeMs = null
+
+      const replacePlaceholder = (fields) =>
+        setMessages((prev) => prev.map((m) => (m._id === placeholderId ? { ...m, ...fields } : m)))
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+
+        // SSE lines end with \n\n — process complete events
+        const parts = buf.split('\n\n')
+        buf = parts.pop() // keep incomplete tail
+
+        for (const part of parts) {
+          const line = part.startsWith('data: ') ? part.slice(6) : part.trim()
+          if (!line) continue
+          let evt
+          try { evt = JSON.parse(line) } catch { continue }
+
+          if (evt.session_id) sessionReceived = evt.session_id
+          if (evt.response_time_ms) responseTimeMs = evt.response_time_ms
+
+          if (evt.type === 'delta') {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m._id === placeholderId
+                  ? { ...m, content: (m.content || '') + evt.delta }
+                  : m
+              )
+            )
+          } else if (evt.type === 'query' || evt.type === 'error') {
+            replacePlaceholder({ content: evt.response, streaming: false, response_time_ms: responseTimeMs })
+          } else if (evt.type === 'action_pending') {
+            setMessages((prev) => prev
+              .filter((m) => m._id !== placeholderId)
+              .concat({
+                role: 'action_pending',
+                id: placeholderId,
+                summary: evt.summary,
+                actionToken: evt.action_token,
+                response_time_ms: responseTimeMs,
+              })
+            )
+          } else if (evt.type === 'done') {
+            replacePlaceholder({ streaming: false, response_time_ms: responseTimeMs })
+          }
+        }
       }
 
       api.get('/chatbot/history').then(({ data }) => setHistory(data)).catch(() => {})
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: 'Error al conectar con el servidor.' },
-      ])
+      setMessages((prev) =>
+        prev.map((m) =>
+          m._id === placeholderId
+            ? { ...m, content: 'Error al conectar con el servidor.', streaming: false }
+            : m
+        )
+      )
     } finally {
       clearInterval(timerRef.current)
       setLoading(false)
