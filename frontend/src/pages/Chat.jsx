@@ -3,6 +3,8 @@ import api from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import ActionConfirm from '../components/ActionConfirm'
 import AudioRecorder from '../components/AudioRecorder'
+import SlashCommandMenu from '../components/SlashCommandMenu'
+import SlashCommandWizard from '../components/SlashCommandWizard'
 
 const SESSION_KEY = 'chat_session_id'
 
@@ -61,6 +63,9 @@ export default function Chat() {
   const [loading, setLoading] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [showHistory, setShowHistory] = useState(false)
+  const [slashData, setSlashData] = useState(null)
+  const [showSlashMenu, setShowSlashMenu] = useState(false)
+  const [activeWizard, setActiveWizard] = useState(null)
   const bottomRef = useRef(null)
   const timerRef = useRef(null)
 
@@ -86,11 +91,44 @@ export default function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const sendMessage = async (e) => {
-    e.preventDefault()
-    if (!input.trim() || loading) return
-    const text = input.trim()
+  const handleInputChange = (e) => {
+    const val = e.target.value
+    setInput(val)
+    if (val.startsWith('/')) {
+      setShowSlashMenu(true)
+      if (!slashData) {
+        api.get('/chatbot/slash-data').then(({ data }) => setSlashData(data)).catch(() => {})
+      }
+    } else {
+      setShowSlashMenu(false)
+    }
+  }
+
+  const openWizard = (cmd) => {
+    setShowSlashMenu(false)
     setInput('')
+    setActiveWizard(cmd)
+  }
+
+  const handleWizardClose = (subcommand) => {
+    if (subcommand) {
+      setActiveWizard(subcommand)
+    } else {
+      setActiveWizard(null)
+    }
+  }
+
+  const handleWizardSend = (message) => {
+    setActiveWizard(null)
+    sendMessage(null, message)
+  }
+
+  const sendMessage = async (e, overrideText) => {
+    if (e) e.preventDefault()
+    const text = overrideText || input.trim()
+    if (!text || loading) return
+    setInput('')
+    setShowSlashMenu(false)
     setMessages((prev) => [...prev, { role: 'user', content: text }])
     setLoading(true)
     setElapsed(0)
@@ -271,7 +309,7 @@ export default function Chat() {
             <div className="flex flex-col items-center justify-center h-full text-center">
               <div className="text-4xl mb-3">🤖</div>
               <p className="text-gray-500 dark:text-gray-400 text-sm max-w-xs">
-                Hola {user?.username}, pregúntame sobre el stock del almacén o pide que realice una acción.
+                Hola {user?.username}, pregúntame sobre el stock o escribe <span className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">/</span> para ver acciones disponibles.
               </p>
             </div>
           )}
@@ -300,29 +338,45 @@ export default function Chat() {
           <div ref={bottomRef} />
         </div>
 
-        <form
-          onSubmit={sendMessage}
-          className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex gap-2 items-center"
-        >
-          <AudioRecorder
-            onTranscribed={(text) => setInput((prev) => (prev ? prev + ' ' + text : text))}
-            disabled={loading}
-          />
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Escribe o dicta tu pregunta…"
-            className="flex-1 px-4 py-2 rounded-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            disabled={loading}
-          />
-          <button
-            type="submit"
-            disabled={loading || !input.trim()}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded-full text-sm font-medium transition-colors"
-          >
-            Enviar
-          </button>
-        </form>
+        <div className="relative px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+          {activeWizard && (
+            <SlashCommandWizard
+              command={activeWizard}
+              slashData={slashData}
+              onSend={handleWizardSend}
+              onClose={handleWizardClose}
+            />
+          )}
+          {showSlashMenu && !activeWizard && (
+            <SlashCommandMenu
+              available={slashData?.commands || []}
+              inputValue={input}
+              onSelect={openWizard}
+            />
+          )}
+          <form onSubmit={sendMessage} className="flex gap-2 items-center">
+            <AudioRecorder
+              onTranscribed={(text) => setInput((prev) => (prev ? prev + ' ' + text : text))}
+              disabled={loading}
+            />
+            <input
+              value={input}
+              onChange={handleInputChange}
+              onFocus={() => input.startsWith('/') && setShowSlashMenu(true)}
+              onBlur={() => setTimeout(() => setShowSlashMenu(false), 150)}
+              placeholder="Escribe, dicta, o usa / para acciones…"
+              className="flex-1 px-4 py-2 rounded-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              disabled={loading}
+            />
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded-full text-sm font-medium transition-colors"
+            >
+              Enviar
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-"""Chatbot service — tool calling agent + action confirmation flow."""
+"""Chatbot service — hybrid: context injection for reads, tool calling for writes."""
 import json
 import logging
 import time
@@ -37,17 +37,56 @@ _WRITE_KEYWORDS = {
 
 
 def _is_write_query(question: str) -> bool:
-    """Return True if question likely needs write/action tools."""
     q = question.lower()
     return any(kw in q for kw in _WRITE_KEYWORDS)
 
 
-def _get_tools(db: Session, user: models.User, action_holder: dict, question: str) -> list:
-    """Return only query tools for read queries; full toolset for write queries."""
-    from backend.tools.query_tools import make_query_tools
-    if _is_write_query(question):
-        return get_tools_for_user(db, user, action_holder)
-    return make_query_tools(db, user)
+# ── Stock context builder ─────────────────────────────────────────────────────
+
+def _build_stock_context(db: Session, user: models.User) -> str:
+    """Fetch all accessible stock directly from DB and return as plain text."""
+    from backend.tools.query_tools import _accessible_wh_ids
+    accessible_ids = _accessible_wh_ids(db, user)
+
+    wh_cache: dict[int, str] = {}
+
+    def _wh_label(wh_id: int) -> str:
+        if wh_id not in wh_cache:
+            wh = db.query(models.Warehouse).filter_by(id=wh_id).first()
+            wh_cache[wh_id] = f"{wh.name} ({wh.code})" if wh else str(wh_id)
+        return wh_cache[wh_id]
+
+    lines: list[str] = []
+
+    for s in (
+        db.query(models.Stock)
+        .filter(
+            models.Stock.warehouse_id.in_(accessible_ids),
+            models.Stock.status != "dado_de_baja",
+        )
+        .all()
+    ):
+        lines.append(
+            f"[{_wh_label(s.warehouse_id)}] {s.product_code} | {s.product_name} | "
+            f"cant: {s.quantity} | mín: {s.min_quantity} | estado: {s.status} | "
+            f"ubic: {s.location_in_warehouse or 'N/A'}"
+        )
+
+    for s in (
+        db.query(models.StockSerial)
+        .filter(
+            models.StockSerial.warehouse_id.in_(accessible_ids),
+            models.StockSerial.status != "dado_de_baja",
+        )
+        .all()
+    ):
+        lines.append(
+            f"[{_wh_label(s.warehouse_id)}] SN: {s.serial_number} | "
+            f"{s.product_name} ({s.product_code}) | estado: {s.status} | "
+            f"ubic: {s.location_in_warehouse or 'N/A'}"
+        )
+
+    return "\n".join(lines) if lines else "No hay productos en el inventario accesible."
 
 
 # ── LLM factory ───────────────────────────────────────────────────────────────
@@ -72,7 +111,7 @@ def _build_llm() -> ChatOpenAI:
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-def _build_system_prompt(user: models.User, db: Session) -> str:
+def _build_system_prompt(user: models.User, db: Session, stock_context: str | None = None) -> str:
     wh_context = ""
     if user.warehouse:
         wh_context = f"Tu almacén asignado: {user.warehouse.name} ({user.warehouse.code})."
@@ -80,16 +119,30 @@ def _build_system_prompt(user: models.User, db: Session) -> str:
     warehouses = db.query(models.Warehouse).all()
     wh_list = ", ".join(f"{w.name} ({w.code})" for w in warehouses)
 
-    return (
+    base = (
         f"Eres un asistente de gestión de inventario. Rol: {user.role.name}. {wh_context}\n"
-        f"Almacenes disponibles: {wh_list}.\n\n"
-        "REGLAS:\n"
-        "1. Para consultas de stock: usa query_stock o query_serial_stock. No inventes datos.\n"
-        "2. Para acciones (transferencias, cambios de estado, crear/editar/eliminar productos, "
-        "gestionar usuarios): usa siempre las herramientas propose_*. Nunca confirmes ejecutar "
-        "una acción sin llamar a la herramienta correspondiente.\n"
-        "3. Responde en español. Sé conciso (máximo 3 líneas para consultas).\n"
-        "4. Si el usuario pide algo fuera de tus permisos de rol, indícalo claramente."
+        f"Almacenes disponibles: {wh_list}.\n"
+        "Responde en español. Sé conciso.\n"
+        "Si el usuario pide algo fuera de sus permisos de rol, indícalo claramente.\n"
+    )
+
+    if stock_context:
+        return (
+            base +
+            "Para consultas: responde SOLO con los datos de inventario proporcionados abajo. "
+            "No inventes datos.\n\n"
+            f"INVENTARIO ACTUAL:\n{stock_context}"
+        )
+
+    return (
+        base +
+        "Para acciones (transferencias, cambios de estado, crear/editar/eliminar productos, "
+        "gestionar usuarios): usa las herramientas propose_*. "
+        "Si el usuario no especifica el código exacto del producto, búscalo en el inventario "
+        "usando el nombre parcial y pregunta si hay ambigüedad. "
+        "Si falta información (cantidad, almacén destino, etc.), pregúntasela al usuario "
+        "antes de llamar a la herramienta.\n\n"
+        f"INVENTARIO ACTUAL:\n{stock_context if stock_context else ''}"
     )
 
 
@@ -200,67 +253,57 @@ def ask(db: Session, user: models.User, question: str, session_id: str | None = 
         session_id = str(uuid.uuid4())
 
     start = time.time()
-    action_holder: dict = {}
-
-    tools = _get_tools(db, user, action_holder, question)
-    llm = _build_llm()
-    llm_with_tools = llm.bind_tools(tools)
-
     history = get_session_history(db, user.id, session_id)
-    messages = [SystemMessage(content=_build_system_prompt(user, db))]
-    for h in history:
-        messages.append(HumanMessage(content=h.question))
-        messages.append(AIMessage(content=h.response))
-    messages.append(HumanMessage(content=question))
 
     try:
-        answer = _run_agent(llm_with_tools, tools, messages, action_holder)
+        if not _is_write_query(question):
+            # ── READ PATH: context injection, single LLM call ──
+            context = _build_stock_context(db, user)
+            messages = [SystemMessage(content=_build_system_prompt(user, db, context))]
+            for h in history:
+                messages.append(HumanMessage(content=h.question))
+                messages.append(AIMessage(content=h.response))
+            messages.append(HumanMessage(content=question))
+            answer = _build_llm().invoke(messages).content or "Lo siento, no pude responder."
+        else:
+            # ── WRITE PATH: tool calling agent with stock context ──
+            action_holder: dict = {}
+            tools = get_tools_for_user(db, user, action_holder)
+            llm = _build_llm()
+            llm_with_tools = llm.bind_tools(tools)
+            context = _build_stock_context(db, user)
+            messages = [SystemMessage(content=_build_system_prompt(user, db, context))]
+            for h in history:
+                messages.append(HumanMessage(content=h.question))
+                messages.append(AIMessage(content=h.response))
+            messages.append(HumanMessage(content=question))
+            answer = _run_agent(llm_with_tools, tools, messages, action_holder)
+
+            elapsed_ms = int((time.time() - start) * 1000)
+            if answer == "__PENDING_ACTION__" and action_holder.get("action"):
+                action_data = action_holder["action"]
+                summary, is_valid = build_confirmation_summary(db, action_data)
+                _save_history(db, user.id, session_id, question, summary, elapsed_ms)
+                if not is_valid:
+                    return {"type": "query", "response": summary, "session_id": session_id, "response_time_ms": elapsed_ms}
+                token = create_action_token(db, user.id, action_data)
+                return {"type": "action_pending", "summary": summary, "action_token": token,
+                        "session_id": session_id, "response_time_ms": elapsed_ms}
+
     except Exception as exc:
         logger.error("LLM call failed (%s): %s", type(exc).__name__, exc)
         err_str = str(exc).lower()
         if "memory" in err_str or "oom" in err_str or "out of memory" in err_str:
-            answer = (
-                "⚠️ El modelo de IA no tiene suficiente memoria RAM disponible. "
-                "Cierra otras aplicaciones (navegador, VS Code, etc.) y vuelve a intentarlo."
-            )
+            answer = "⚠️ Sin memoria RAM suficiente. Cierra otras apps e intenta de nuevo."
         elif "connection" in err_str or "refused" in err_str or "connect" in err_str:
-            answer = (
-                "⚠️ No se puede conectar con Ollama. "
-                "Verifica que Ollama esté corriendo en tu máquina (ollama serve)."
-            )
+            answer = "⚠️ No se puede conectar con Ollama. Verifica que esté corriendo (ollama serve)."
         else:
-            answer = (
-                f"⚠️ El servicio de IA no está disponible: {type(exc).__name__}. "
-                "Revisa los logs del backend para más detalles."
-            )
+            answer = f"⚠️ Error de IA: {type(exc).__name__}. Revisa los logs del backend."
 
     elapsed_ms = int((time.time() - start) * 1000)
-
-    # ── Action pending flow ──
-    if answer == "__PENDING_ACTION__" and action_holder.get("action"):
-        action_data = action_holder["action"]
-        summary, is_valid = build_confirmation_summary(db, action_data)
-
-        _save_history(db, user.id, session_id, question, summary, elapsed_ms)
-
-        if not is_valid:
-            return {"type": "query", "response": summary, "session_id": session_id, "response_time_ms": elapsed_ms}
-
-        token = create_action_token(db, user.id, action_data)
-        return {
-            "type": "action_pending",
-            "summary": summary,
-            "action_token": token,
-            "session_id": session_id,
-            "response_time_ms": elapsed_ms,
-        }
-
-    # ── Normal query response ──
     _save_history(db, user.id, session_id, question, answer, elapsed_ms)
-
     if any(phrase in answer.lower() for phrase in UNRESOLVED_PHRASES):
         _notify_unresolved(db, user, question)
-
     return {"type": "query", "response": answer, "session_id": session_id, "response_time_ms": elapsed_ms}
 
 
@@ -269,93 +312,125 @@ def ask(db: Session, user: models.User, question: str, session_id: str | None = 
 async def ask_stream(
     db: Session, user: models.User, question: str, session_id: str | None = None
 ) -> AsyncGenerator[str, None]:
-    """Yield SSE lines. Tool calls run with invoke; final text is streamed token-by-token."""
+    """Yield SSE lines.
+    Read queries: context injection → single streamed LLM call.
+    Write queries: tool calling agent → streamed final answer.
+    """
     if not session_id:
         session_id = str(uuid.uuid4())
 
     start = time.time()
-    action_holder: dict = {}
-
-    tools = _get_tools(db, user, action_holder, question)
-    llm = _build_llm()
-    llm_with_tools = llm.bind_tools(tools)
-    tools_by_name = {t.name: t for t in tools}
-
     history = get_session_history(db, user.id, session_id)
-    messages = [SystemMessage(content=_build_system_prompt(user, db))]
-    for h in history:
-        messages.append(HumanMessage(content=h.question))
-        messages.append(AIMessage(content=h.response))
-    messages.append(HumanMessage(content=question))
-
-    msgs = list(messages)
 
     def _sse(payload: dict) -> str:
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
+    def _build_base_messages(sys_prompt: str) -> list:
+        msgs = [SystemMessage(content=sys_prompt)]
+        for h in history:
+            msgs.append(HumanMessage(content=h.question))
+            msgs.append(AIMessage(content=h.response))
+        msgs.append(HumanMessage(content=question))
+        return msgs
+
     try:
-        # Phase 1: tool-call iterations (non-streamed, each is pure JSON)
-        for _ in range(3):
-            response = llm_with_tools.invoke(msgs)
-            msgs.append(response)
+        if not _is_write_query(question):
+            # ── READ PATH: context injection, single streamed LLM call ──
+            context = _build_stock_context(db, user)
+            messages = _build_base_messages(_build_system_prompt(user, db, context))
+            llm = _build_llm()
 
-            if not response.tool_calls:
-                # Model answered directly (no tool needed) — send as single event
-                answer = response.content
-                elapsed_ms = int((time.time() - start) * 1000)
-                _save_history(db, user.id, session_id, question, answer, elapsed_ms)
-                if any(p in answer.lower() for p in UNRESOLVED_PHRASES):
-                    _notify_unresolved(db, user, question)
-                yield _sse({"type": "query", "response": answer,
-                             "session_id": session_id, "response_time_ms": elapsed_ms})
-                return
+            full_answer = ""
+            for chunk in llm.stream(messages):
+                delta = chunk.content or ""
+                if delta:
+                    full_answer += delta
+                    yield _sse({"type": "delta", "delta": delta})
 
-            # Execute tool calls
-            tool_results: list[ToolMessage] = []
-            for call in response.tool_calls:
-                tool = tools_by_name.get(call["name"])
-                try:
-                    content = str(tool.invoke(call["args"])) if tool else f"Herramienta '{call['name']}' no disponible."
-                except Exception as exc:
-                    content = f"Error: {exc}"
-                tool_results.append(ToolMessage(content=content, tool_call_id=call["id"]))
-                if action_holder.get("action"):
-                    break
+            if not full_answer:
+                full_answer = "Lo siento, no pude completar la consulta. Intenta de nuevo."
+                yield _sse({"type": "delta", "delta": full_answer})
 
-            if action_holder.get("action"):
-                action_data = action_holder["action"]
-                summary, is_valid = build_confirmation_summary(db, action_data)
-                elapsed_ms = int((time.time() - start) * 1000)
-                _save_history(db, user.id, session_id, question, summary, elapsed_ms)
-                if not is_valid:
-                    yield _sse({"type": "query", "response": summary,
+            elapsed_ms = int((time.time() - start) * 1000)
+            logger.info("READ query answered in %dms", elapsed_ms)
+            _save_history(db, user.id, session_id, question, full_answer, elapsed_ms)
+            if any(p in full_answer.lower() for p in UNRESOLVED_PHRASES):
+                _notify_unresolved(db, user, question)
+            yield _sse({"type": "done", "session_id": session_id, "response_time_ms": elapsed_ms})
+
+        else:
+            # ── WRITE PATH: tool calling agent with stock context ──
+            action_holder: dict = {}
+            tools = get_tools_for_user(db, user, action_holder)
+            llm = _build_llm()
+            llm_with_tools = llm.bind_tools(tools)
+            tools_by_name = {t.name: t for t in tools}
+            context = _build_stock_context(db, user)
+            msgs = _build_base_messages(_build_system_prompt(user, db, context))
+
+            # Phase 1: tool-call iterations
+            for _ in range(3):
+                response = llm_with_tools.invoke(msgs)
+                msgs.append(response)
+
+                if not response.tool_calls:
+                    answer = response.content
+                    elapsed_ms = int((time.time() - start) * 1000)
+                    logger.info("WRITE query (direct) answered in %dms", elapsed_ms)
+                    _save_history(db, user.id, session_id, question, answer, elapsed_ms)
+                    if any(p in answer.lower() for p in UNRESOLVED_PHRASES):
+                        _notify_unresolved(db, user, question)
+                    yield _sse({"type": "query", "response": answer,
                                  "session_id": session_id, "response_time_ms": elapsed_ms})
                     return
-                token = create_action_token(db, user.id, action_data)
-                yield _sse({"type": "action_pending", "summary": summary,
-                             "action_token": token, "session_id": session_id,
-                             "response_time_ms": elapsed_ms})
-                return
 
-            msgs.extend(tool_results)
+                tool_results: list[ToolMessage] = []
+                for call in response.tool_calls:
+                    tool = tools_by_name.get(call["name"])
+                    try:
+                        content = str(tool.invoke(call["args"])) if tool else f"Herramienta '{call['name']}' no disponible."
+                    except Exception as exc:
+                        content = f"Error: {exc}"
+                    tool_results.append(ToolMessage(content=content, tool_call_id=call["id"]))
+                    if action_holder.get("action"):
+                        break
 
-        # Phase 2: stream the final LLM response token by token
-        full_answer = ""
-        for chunk in llm.stream(msgs):
-            delta = chunk.content or ""
-            if delta:
-                full_answer += delta
-                yield _sse({"type": "delta", "delta": delta})
+                if action_holder.get("action"):
+                    action_data = action_holder["action"]
+                    summary, is_valid = build_confirmation_summary(db, action_data)
+                    elapsed_ms = int((time.time() - start) * 1000)
+                    logger.info("WRITE query (action) answered in %dms", elapsed_ms)
+                    _save_history(db, user.id, session_id, question, summary, elapsed_ms)
+                    if not is_valid:
+                        yield _sse({"type": "query", "response": summary,
+                                     "session_id": session_id, "response_time_ms": elapsed_ms})
+                        return
+                    token = create_action_token(db, user.id, action_data)
+                    yield _sse({"type": "action_pending", "summary": summary,
+                                 "action_token": token, "session_id": session_id,
+                                 "response_time_ms": elapsed_ms})
+                    return
 
-        if not full_answer:
-            full_answer = "Lo siento, no pude completar la consulta. Intenta de nuevo."
-            yield _sse({"type": "delta", "delta": full_answer})
+                msgs.extend(tool_results)
 
-        elapsed_ms = int((time.time() - start) * 1000)
-        _save_history(db, user.id, session_id, question, full_answer, elapsed_ms)
-        if any(p in full_answer.lower() for p in UNRESOLVED_PHRASES):
-            _notify_unresolved(db, user, question)
-        yield _sse({"type": "done", "session_id": session_id, "response_time_ms": elapsed_ms})
+            # Phase 2: stream final answer
+            full_answer = ""
+            for chunk in llm.stream(msgs):
+                delta = chunk.content or ""
+                if delta:
+                    full_answer += delta
+                    yield _sse({"type": "delta", "delta": delta})
+
+            if not full_answer:
+                full_answer = "Lo siento, no pude completar la consulta. Intenta de nuevo."
+                yield _sse({"type": "delta", "delta": full_answer})
+
+            elapsed_ms = int((time.time() - start) * 1000)
+            logger.info("WRITE query (streamed) answered in %dms", elapsed_ms)
+            _save_history(db, user.id, session_id, question, full_answer, elapsed_ms)
+            if any(p in full_answer.lower() for p in UNRESOLVED_PHRASES):
+                _notify_unresolved(db, user, question)
+            yield _sse({"type": "done", "session_id": session_id, "response_time_ms": elapsed_ms})
 
     except Exception as exc:
         logger.error("LLM stream failed (%s): %s", type(exc).__name__, exc)
