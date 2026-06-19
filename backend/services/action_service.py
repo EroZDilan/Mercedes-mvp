@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from backend import models
 from backend.config import settings
 from backend.services.stock_service import _find_superior
+from backend.services import inventree_service
 
 VALID_STATUSES = {"disponible", "reservado", "en_reparacion", "dado_de_baja"}
 
@@ -351,6 +352,9 @@ def _exec_transfer(db, user, params):
         _record_history(db, user, dst.id, "cantidad", to_wh.id, "quantity", 0, params["quantity"])
 
     db.flush()
+    inventree_service.sync_transfer(
+        src.product_name, params["from_warehouse"], params["to_warehouse"], params["quantity"]
+    )
     return (
         f"Transferencia completada: {params['quantity']} unidades de {src.product_name} "
         f"de {from_wh.name} a {to_wh.name}.",
@@ -370,6 +374,7 @@ def _exec_status_change(db, user, params):
         stock.status = params["new_status"]
         _record_history(db, user, stock.id, "cantidad", wh.id, "status", old, params["new_status"])
         db.flush()
+        inventree_service.sync_status_change(stock.product_name, params["warehouse_code"], params["new_status"])
         return f"Estado de {stock.product_name} cambiado a '{params['new_status']}' en {wh.name}.", stock.id
 
     serial = db.query(models.StockSerial).filter_by(
@@ -380,6 +385,7 @@ def _exec_status_change(db, user, params):
         serial.status = params["new_status"]
         _record_history(db, user, serial.id, "serie_unica", wh.id, "status", old, params["new_status"])
         db.flush()
+        inventree_service.sync_status_change(serial.product_name, params["warehouse_code"], params["new_status"])
         return f"Estado de {serial.product_name} (SN: {identifier}) cambiado a '{params['new_status']}'.", serial.id
 
     raise ValueError(f"Producto '{identifier}' no encontrado en {wh.name}.")
@@ -404,6 +410,10 @@ def _exec_create_product(db, user, params):
     db.add(product)
     db.flush()
     _record_history(db, user, product.id, "cantidad", wh.id, "quantity", 0, product.quantity)
+    inventree_service.sync_create_product(
+        product.product_name, params["warehouse_code"],
+        params.get("category", ""), int(params.get("quantity", 0)),
+    )
     return f"Producto {product.product_name} ({product.product_code}) creado en {wh.name}.", product.id
 
 
@@ -442,6 +452,7 @@ def _exec_delete_product(db, user, params):
     stock.status = "dado_de_baja"
     _record_history(db, user, stock.id, "cantidad", wh.id, "status", old_status, "dado_de_baja")
     db.flush()
+    inventree_service.sync_deactivate_product(stock.product_name)
     return f"Producto {stock.product_name} ({params['product_code']}) dado de baja en {wh.name}.", stock.id
 
 
@@ -469,6 +480,10 @@ def _exec_create_user(db, user, params):
     )
     db.add(new_user)
     db.flush()
+    inventree_service.sync_create_user(
+        params["username"], params.get("full_name", ""),
+        params["role_name"], password,
+    )
     return f"Usuario {params['username']} ({params['full_name']}) creado con rol {params['role_name']}.", new_user.id
 
 
@@ -478,6 +493,7 @@ def _exec_deactivate_user(db, user, params):
         raise ValueError(f"Usuario '{params['username']}' no encontrado.")
     target.is_active = False
     db.flush()
+    inventree_service.sync_deactivate_user(params["username"])
     return f"Usuario {params['username']} desactivado.", target.id
 
 

@@ -13,10 +13,11 @@ router = APIRouter(prefix="/crm", tags=["crm"])
 @router.get("/notes", response_model=list[schemas.CrmNoteOut])
 def list_notes(
     user_id: Optional[int] = Query(None),
+    related_to: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    return crm_service.get_notes(db, current_user, user_id)
+    return crm_service.get_notes(db, current_user, user_id, related_to)
 
 
 @router.post("/notes", response_model=schemas.CrmNoteOut, status_code=201)

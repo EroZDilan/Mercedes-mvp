@@ -81,17 +81,17 @@ def _check_crm_view_access(db: Session, requester: models.User, target_user_id: 
 
 
 def get_notes(
-    db: Session, user: models.User, target_user_id: int | None = None
+    db: Session, user: models.User,
+    target_user_id: int | None = None,
+    related_to: str | None = None,
 ) -> list[models.CrmNote]:
     uid = target_user_id if target_user_id else user.id
     if uid != user.id:
         _check_crm_view_access(db, user, uid)
-    return (
-        db.query(models.CrmNote)
-        .filter_by(user_id=uid)
-        .order_by(models.CrmNote.created_at.desc())
-        .all()
-    )
+    q = db.query(models.CrmNote).filter_by(user_id=uid)
+    if related_to:
+        q = q.filter(models.CrmNote.related_to == related_to)
+    return q.order_by(models.CrmNote.created_at.desc()).all()
 
 
 def create_note(
