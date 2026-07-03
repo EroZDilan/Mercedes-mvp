@@ -23,7 +23,9 @@ class Settings(BaseSettings):
 
     sync_interval_minutes: int = 30
     max_login_attempts: int = 5
-    allowed_origin: str = "http://localhost:3000"
+    # Orígenes permitidos en CORS — separados por coma para multi-PC
+    # Ejemplo: "https://localhost:3000,https://192.168.1.50:3000"
+    allowed_origins: str = "https://localhost:3000"
     login_rate_limit: str = "10/minute"
 
     action_token_ttl_seconds: int = 60
@@ -35,6 +37,11 @@ class Settings(BaseSettings):
 
     inventree_url: str = "http://localhost:8080/api/"
     inventree_token: str = ""
+
+    # Multi-PC: rol de este nodo y conexión al servidor central
+    node_role: str = "server"          # "server" | "client"
+    node_id: str = "node-1"            # identificador único de este nodo
+    central_server_url: str = ""       # solo en clientes: URL del servidor central
 
     model_config = SettingsConfigDict(env_file=".env")
 

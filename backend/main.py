@@ -43,9 +43,10 @@ app = FastAPI(title="Stock Chatbot MVP", version="0.2.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+_origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.allowed_origin],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -64,4 +65,9 @@ app.include_router(audio.router)
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "node_id": settings.node_id,
+        "node_role": settings.node_role,
+        "central_server": settings.central_server_url or None,
+    }
