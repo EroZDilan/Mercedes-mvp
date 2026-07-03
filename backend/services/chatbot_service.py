@@ -341,7 +341,7 @@ async def ask_stream(
             llm = _build_llm()
 
             full_answer = ""
-            for chunk in llm.stream(messages):
+            async for chunk in llm.astream(messages):
                 delta = chunk.content or ""
                 if delta:
                     full_answer += delta
@@ -370,7 +370,7 @@ async def ask_stream(
 
             # Phase 1: tool-call iterations
             for _ in range(3):
-                response = llm_with_tools.invoke(msgs)
+                response = await llm_with_tools.ainvoke(msgs)
                 msgs.append(response)
 
                 if not response.tool_calls:
@@ -415,7 +415,7 @@ async def ask_stream(
 
             # Phase 2: stream final answer
             full_answer = ""
-            for chunk in llm.stream(msgs):
+            async for chunk in llm.astream(msgs):
                 delta = chunk.content or ""
                 if delta:
                     full_answer += delta

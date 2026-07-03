@@ -1,0 +1,60 @@
+services:
+  inventree-db:
+    image: postgres:14
+    container_name: inventree_db
+    environment:
+      POSTGRES_DB: inventree
+      POSTGRES_USER: inventree
+      POSTGRES_PASSWORD: inventree_pass
+    volumes:
+      - inventree_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  inventree-server:
+    image: inventree/inventree:stable
+    container_name: inventree_server
+    depends_on:
+      - inventree-db
+    environment:
+      INVENTREE_DB_ENGINE: postgresql
+      INVENTREE_DB_NAME: inventree
+      INVENTREE_DB_USER: inventree
+      INVENTREE_DB_PASSWORD: inventree_pass
+      INVENTREE_DB_HOST: inventree-db
+      INVENTREE_DB_PORT: 5432
+      INVENTREE_ADMIN_USER: admin
+      INVENTREE_ADMIN_PASSWORD: admin1234
+      INVENTREE_ADMIN_EMAIL: admin@demo.com
+      INVENTREE_DEBUG: "False"
+      INVENTREE_TIMEZONE: Europe/Madrid
+      INVENTREE_LANGUAGE: es
+      INVENTREE_SITE_URL: http://localhost:8080
+      INVENTREE_CSRF_TRUSTED_ORIGINS: http://localhost:8080
+    volumes:
+      - inventree_data:/home/inventree/data
+    ports:
+      - "8080:8000"
+    restart: unless-stopped
+
+  inventree-worker:
+    image: inventree/inventree:stable
+    container_name: inventree_worker
+    depends_on:
+      - inventree-server
+    environment:
+      INVENTREE_DB_ENGINE: postgresql
+      INVENTREE_DB_NAME: inventree
+      INVENTREE_DB_USER: inventree
+      INVENTREE_DB_PASSWORD: inventree_pass
+      INVENTREE_DB_HOST: inventree-db
+      INVENTREE_DB_PORT: 5432
+      INVENTREE_SITE_URL: http://localhost:8080
+      INVENTREE_CSRF_TRUSTED_ORIGINS: http://localhost:8080
+    volumes:
+      - inventree_data:/home/inventree/data
+    command: invoke worker
+    restart: unless-stopped
+
+volumes:
+  inventree_db_data:
+  inventree_data:

@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_ROOT"
-source .venv/bin/activate
+source "$PROJECT_ROOT/backend/venv/bin/activate"
 
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8000}"

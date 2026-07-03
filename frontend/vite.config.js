@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 
-const backendTarget = process.env.BACKEND_URL ?? 'http://localhost:8000'
+const backendTarget = process.env.BACKEND_URL ?? 'https://localhost:8000'
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), basicSsl()],

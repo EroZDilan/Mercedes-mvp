@@ -1,9 +1,10 @@
 """Sync confirmed chatbot actions to InvenTree (Spiga+ simulator).
 
-All functions are fire-and-forget: errors are logged but never propagate
-so a downed InvenTree never blocks a confirmed action.
+All public sync_* functions are truly fire-and-forget: they run in a
+daemon thread so a downed InvenTree never adds latency to confirmed actions.
 """
 import logging
+import threading
 
 import httpx
 
@@ -95,9 +96,21 @@ def _stock_items_for_part(part_pk: int, warehouse_code: str | None = None) -> li
     ]
 
 
-# ── Public sync functions ─────────────────────────────────────────────────────
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _run_async(fn, *args) -> None:
+    """Ejecuta fn(*args) en un daemon thread para no bloquear el hilo principal."""
+    t = threading.Thread(target=fn, args=args, daemon=True)
+    t.start()
+
+
+# ── Public sync functions (fire-and-forget) ───────────────────────────────────
 
 def sync_transfer(product_name: str, from_wh: str, to_wh: str, quantity: int) -> None:
+    _run_async(_sync_transfer_inner, product_name, from_wh, to_wh, quantity)
+
+
+def _sync_transfer_inner(product_name: str, from_wh: str, to_wh: str, quantity: int) -> None:
     if not settings.inventree_token:
         return
     try:
@@ -129,6 +142,10 @@ def sync_transfer(product_name: str, from_wh: str, to_wh: str, quantity: int) ->
 
 
 def sync_status_change(product_name: str, warehouse_code: str, new_status: str) -> None:
+    _run_async(_sync_status_change_inner, product_name, warehouse_code, new_status)
+
+
+def _sync_status_change_inner(product_name: str, warehouse_code: str, new_status: str) -> None:
     if not settings.inventree_token:
         return
     try:
@@ -145,6 +162,15 @@ def sync_status_change(product_name: str, warehouse_code: str, new_status: str) 
 
 
 def sync_create_product(
+    product_name: str,
+    warehouse_code: str,
+    category: str,
+    quantity: int,
+) -> None:
+    _run_async(_sync_create_product_inner, product_name, warehouse_code, category, quantity)
+
+
+def _sync_create_product_inner(
     product_name: str,
     warehouse_code: str,
     category: str,
@@ -171,6 +197,10 @@ def sync_create_product(
 
 
 def sync_create_user(username: str, full_name: str, role_name: str, password: str) -> None:
+    _run_async(_sync_create_user_inner, username, full_name, role_name, password)
+
+
+def _sync_create_user_inner(username: str, full_name: str, role_name: str, password: str) -> None:
     if not settings.inventree_token:
         return
     try:
@@ -193,6 +223,10 @@ def sync_create_user(username: str, full_name: str, role_name: str, password: st
 
 
 def sync_deactivate_user(username: str) -> None:
+    _run_async(_sync_deactivate_user_inner, username)
+
+
+def _sync_deactivate_user_inner(username: str) -> None:
     if not settings.inventree_token:
         return
     try:
@@ -207,6 +241,10 @@ def sync_deactivate_user(username: str) -> None:
 
 
 def sync_deactivate_product(product_name: str) -> None:
+    _run_async(_sync_deactivate_product_inner, product_name)
+
+
+def _sync_deactivate_product_inner(product_name: str) -> None:
     if not settings.inventree_token:
         return
     try:

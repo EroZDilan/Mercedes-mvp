@@ -16,7 +16,10 @@ scheduler = BackgroundScheduler()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
     from backend.services.sync_service import run_scheduled_sync
+    from backend.services.audio_service import preload_model
+
     scheduler.add_job(
         run_scheduled_sync,
         "interval",
@@ -25,6 +28,12 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
     scheduler.start()
+
+    # Whisper es lento en el primer uso — lo precargamos en background
+    # para que el evento loop no se bloquee y el primer usuario no espere.
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, preload_model)
+
     yield
     scheduler.shutdown(wait=False)
 
