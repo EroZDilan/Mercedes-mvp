@@ -313,6 +313,10 @@ def _record_history(db, user, product_id, product_type, warehouse_id, field, old
 
 
 def _exec_transfer(db, user, params):
+    quantity = int(params.get("quantity", 0))
+    if quantity <= 0:
+        raise ValueError("La cantidad a transferir debe ser mayor que cero.")
+
     from_wh = db.query(models.Warehouse).filter_by(code=params["from_warehouse"]).first()
     to_wh = db.query(models.Warehouse).filter_by(code=params["to_warehouse"]).first()
     if not from_wh or not to_wh:
@@ -321,11 +325,16 @@ def _exec_transfer(db, user, params):
     src = db.query(models.Stock).filter_by(
         warehouse_id=from_wh.id, product_code=params["product_code"]
     ).first()
-    if not src or src.quantity < params["quantity"]:
-        raise ValueError("Stock insuficiente o producto no encontrado.")
+    if not src:
+        raise ValueError(f"Producto '{params['product_code']}' no encontrado en {from_wh.name}.")
+    if src.quantity < quantity:
+        raise ValueError(
+            f"Stock insuficiente: {src.product_name} tiene {src.quantity} unidades, "
+            f"no se pueden transferir {quantity}."
+        )
 
     old_qty = src.quantity
-    src.quantity -= params["quantity"]
+    src.quantity -= quantity
     _record_history(db, user, src.id, "cantidad", from_wh.id, "quantity", old_qty, src.quantity)
 
     dst = db.query(models.Stock).filter_by(
@@ -333,7 +342,7 @@ def _exec_transfer(db, user, params):
     ).first()
     if dst:
         old_dst = dst.quantity
-        dst.quantity += params["quantity"]
+        dst.quantity += quantity
         _record_history(db, user, dst.id, "cantidad", to_wh.id, "quantity", old_dst, dst.quantity)
     else:
         dst = models.Stock(
@@ -341,7 +350,7 @@ def _exec_transfer(db, user, params):
             product_code=src.product_code,
             product_name=src.product_name,
             category=src.category,
-            quantity=params["quantity"],
+            quantity=quantity,
             min_quantity=src.min_quantity,
             unit=src.unit,
             location_in_warehouse="",
@@ -349,20 +358,25 @@ def _exec_transfer(db, user, params):
         )
         db.add(dst)
         db.flush()
-        _record_history(db, user, dst.id, "cantidad", to_wh.id, "quantity", 0, params["quantity"])
+        _record_history(db, user, dst.id, "cantidad", to_wh.id, "quantity", 0, quantity)
 
     db.flush()
     inventree_service.sync_transfer(
-        src.product_name, params["from_warehouse"], params["to_warehouse"], params["quantity"]
+        src.product_name, params["from_warehouse"], params["to_warehouse"], quantity
     )
     return (
-        f"Transferencia completada: {params['quantity']} unidades de {src.product_name} "
+        f"Transferencia completada: {quantity} unidades de {src.product_name} "
         f"de {from_wh.name} a {to_wh.name}.",
         src.id,
     )
 
 
 def _exec_status_change(db, user, params):
+    new_status = params.get("new_status", "")
+    if new_status not in VALID_STATUSES:
+        raise ValueError(
+            f"Estado inválido: '{new_status}'. Valores aceptados: {', '.join(sorted(VALID_STATUSES))}"
+        )
     identifier = params["product_identifier"]
     wh = db.query(models.Warehouse).filter_by(code=params["warehouse_code"]).first()
     if not wh:
@@ -395,6 +409,13 @@ def _exec_create_product(db, user, params):
     wh = db.query(models.Warehouse).filter_by(code=params["warehouse_code"]).first()
     if not wh:
         raise ValueError(f"Almacén '{params['warehouse_code']}' no encontrado.")
+
+    if db.query(models.Stock).filter_by(
+        warehouse_id=wh.id, product_code=params["product_code"]
+    ).first():
+        raise ValueError(
+            f"El producto '{params['product_code']}' ya existe en {wh.name}."
+        )
 
     product = models.Stock(
         warehouse_id=wh.id,
