@@ -156,9 +156,9 @@ class CrmNoteOut(BaseModel):
 
 
 class CrmNoteCreateRequest(BaseModel):
-    content: str
+    content: str = Field(min_length=1)
     related_to: Optional[str] = None
 
 
 class CrmNoteUpdateRequest(BaseModel):
-    content: str
+    content: str = Field(min_length=1)
