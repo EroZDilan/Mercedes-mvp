@@ -5,7 +5,7 @@ client = httpx.Client()  # reutilizar para PATCH
 
 BASE = "http://localhost:8080/api/"
 HEADERS = {
-    "Authorization": "Token inv-e314f1c59dd09df358ef1821034183d275d364b7-20260619",
+    "Authorization": "Token inv-c83a038c4ec8619268c22e8f59cf5893261895af-20260704",
     "Content-Type": "application/json"
 }
 

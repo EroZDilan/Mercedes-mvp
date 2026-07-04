@@ -33,6 +33,8 @@ _WRITE_KEYWORDS = {
     "crea usuario", "nuevo usuario",
     "reserva", "reservar", "en reparacion", "en reparación", "dado de baja",
     "propone", "proponer", "ejecuta", "confirma",
+    "vende", "vender", "venta", "vendido", "compra", "comprar",
+    "registra venta", "factura", "cliente compra",
 }
 
 

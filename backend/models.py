@@ -1,6 +1,6 @@
 from datetime import datetime, UTC
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+    Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 )
 from sqlalchemy.orm import relationship
 from backend.database import Base
@@ -180,3 +180,39 @@ class ActionToken(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     expires_at = Column(DateTime, nullable=False)
     used = Column(Boolean, default=False)
+
+
+class Sale(Base):
+    """Registro de ventas realizadas desde el chatbot."""
+    __tablename__ = "sales"
+    id = Column(Integer, primary_key=True)
+    node_id = Column(String, default="server")          # qué nodo registró la venta
+    seller_id = Column(Integer, ForeignKey("users.id"))
+    customer_name = Column(String)                      # nombre del cliente
+    customer_ref = Column(String)                       # referencia CRM opcional
+    product_code = Column(String, nullable=False)
+    product_name = Column(String, nullable=False)
+    serial_number = Column(String)                      # si es producto serializado
+    warehouse_code = Column(String, nullable=False)
+    quantity = Column(Integer, default=1)
+    unit_price = Column(Float)
+    total_price = Column(Float)
+    notes = Column(Text)
+    status = Column(String, default="completed")        # completed | conflict | cancelled
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    synced_at = Column(DateTime)                        # cuándo se sincronizó al servidor central
+    seller = relationship("User", foreign_keys=[seller_id])
+
+
+class OperationQueue(Base):
+    """Cola de operaciones pendientes de sincronizar con el servidor central."""
+    __tablename__ = "operation_queue"
+    id = Column(Integer, primary_key=True)
+    node_id = Column(String, nullable=False)
+    operation_type = Column(String, nullable=False)     # transfer | status_change | sale | create_product
+    payload = Column(Text, nullable=False)              # JSON con todos los parámetros
+    op_timestamp = Column(DateTime, nullable=False)     # cuándo ocurrió la operación (para conflictos)
+    status = Column(String, default="pending")          # pending | synced | conflict | failed
+    conflict_detail = Column(Text)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    synced_at = Column(DateTime)

@@ -1,12 +1,35 @@
+import { useState, useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useNotifications } from '../hooks/useNotifications'
+import api from '../api/client'
 
 const roleLabel = { admin: 'Admin', gestor: 'Gestor', supervisor: 'Supervisor', operador: 'Operador' }
+
+function useSyncBadge() {
+  const [pending, setPending] = useState(0)
+  const intervalRef = useRef(null)
+
+  const fetch = async () => {
+    try {
+      const { data } = await api.get('/sales/queue/status')
+      setPending(data.pending ?? 0)
+    } catch {}
+  }
+
+  useEffect(() => {
+    fetch()
+    intervalRef.current = setInterval(fetch, 30_000)
+    return () => clearInterval(intervalRef.current)
+  }, [])
+
+  return pending
+}
 
 export default function Navbar() {
   const { user, logout, darkMode, setDarkMode, isAdmin, isGestor } = useAuth()
   const { unreadCount } = useNotifications()
+  const pendingSync = useSyncBadge()
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -14,6 +37,7 @@ export default function Navbar() {
     { to: '/chat', label: 'Chat' },
     { to: '/stock', label: 'Stock' },
     { to: '/crm', label: 'CRM' },
+    { to: '/sales', label: 'Ventas' },
     { to: '/notifications', label: 'Notificaciones' },
     ...(isAdmin ? [{ to: '/admin', label: 'Admin' }] : []),
   ]
@@ -39,6 +63,11 @@ export default function Navbar() {
             {to === '/notifications' && unreadCount > 0 && (
               <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
                 {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
+            {to === '/sales' && pendingSync > 0 && (
+              <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-xs rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
+                {pendingSync > 99 ? '99+' : pendingSync}
               </span>
             )}
           </Link>

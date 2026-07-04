@@ -8,6 +8,7 @@ import Stock from './pages/Stock'
 import CRM from './pages/CRM'
 import Notifications from './pages/Notifications'
 import Admin from './pages/Admin'
+import Sales from './pages/Sales'
 
 function Layout() {
   return (
@@ -40,6 +41,7 @@ export default function App() {
             <Route path="/stock" element={<Stock />} />
             <Route path="/crm" element={<CRM />} />
             <Route path="/notifications" element={<Notifications />} />
+            <Route path="/sales" element={<Sales />} />
             <Route
               path="/admin"
               element={

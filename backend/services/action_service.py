@@ -12,6 +12,7 @@ from backend import models
 from backend.config import settings
 from backend.services.stock_service import _find_superior
 from backend.services import inventree_service
+from backend.services import queue_service
 
 VALID_STATUSES = {"disponible", "reservado", "en_reparacion", "dado_de_baja"}
 
@@ -65,6 +66,7 @@ def build_confirmation_summary(db: Session, action_data: dict) -> tuple[str, boo
         dispatch = {
             "transfer": _summary_transfer,
             "status_change": _summary_status_change,
+            "sale": _summary_sale,
             "create_product": _summary_create_product,
             "edit_product": _summary_edit_product,
             "delete_product": _summary_delete_product,
@@ -145,6 +147,61 @@ def _summary_status_change(db, params):
         )
 
     return f"Producto '{identifier}' no encontrado en {wh.name}.", False
+
+
+def _summary_sale(db, params):
+    wh_code = params.get("warehouse_code", "")
+    identifier = params.get("product_identifier", "")
+    qty = int(params.get("quantity", 1))
+    customer = params.get("customer_name", "?")
+    serial = params.get("serial_number", "")
+    price = float(params.get("unit_price", 0))
+
+    wh = db.query(models.Warehouse).filter_by(code=wh_code).first()
+    if not wh:
+        return f"Almacén '{wh_code}' no encontrado.", False
+
+    # Buscar por código o nombre en stock por cantidad
+    stock = (
+        db.query(models.Stock)
+        .filter(
+            models.Stock.warehouse_id == wh.id,
+            (models.Stock.product_code == identifier) | (models.Stock.product_name.ilike(f"%{identifier}%")),
+            models.Stock.status == "disponible",
+        )
+        .first()
+    )
+    if stock:
+        if stock.quantity < qty:
+            return (
+                f"Stock insuficiente: {stock.product_name} tiene solo {stock.quantity} unidades. "
+                "Ten en cuenta que el producto puede no estar disponible.",
+                False,
+            )
+        total = price * qty if price else None
+        price_str = f" · Precio: {price}€/ud → Total: {total:.2f}€" if total else ""
+        return (
+            f"Vas a registrar la venta de **{qty} {stock.unit}** de **{stock.product_name}** "
+            f"({stock.product_code}) a **{customer}** desde {wh.name}.{price_str}\n"
+            f"Stock tras la venta: {stock.quantity} → {stock.quantity - qty} unidades.",
+            True,
+        )
+
+    # Buscar por número de serie
+    if serial:
+        s_item = db.query(models.StockSerial).filter_by(
+            warehouse_id=wh.id, serial_number=serial, status="disponible"
+        ).first()
+        if s_item:
+            price_str = f" · Precio: {price:.2f}€" if price else ""
+            return (
+                f"Vas a vender **{s_item.product_name}** (SN: {serial}) a **{customer}** "
+                f"desde {wh.name}.{price_str}\nEl ítem pasará a estado 'dado_de_baja' (vendido).",
+                True,
+            )
+        return f"Ítem serializado '{serial}' no encontrado o no disponible en {wh.name}. Ten en cuenta que el producto puede no estar disponible.", False
+
+    return f"Producto '{identifier}' no encontrado en {wh.name}. Ten en cuenta que el producto puede no estar disponible.", False
 
 
 def _summary_create_product(db, params):
@@ -270,6 +327,7 @@ def execute_action(db: Session, user: models.User, action_data: dict) -> str:
     dispatch = {
         "transfer": _exec_transfer,
         "status_change": _exec_status_change,
+        "sale": _exec_sale,
         "create_product": _exec_create_product,
         "edit_product": _exec_edit_product,
         "delete_product": _exec_delete_product,
@@ -298,6 +356,11 @@ def execute_action(db: Session, user: models.User, action_data: dict) -> str:
     db.commit()
 
     return result_msg
+
+
+def _queue_operation(db, op_type: str, params: dict, user: models.User):
+    """Encola la operación para sincronización offline."""
+    queue_service.enqueue(db, op_type, params, user_id=user.id)
 
 
 def _record_history(db, user, product_id, product_type, warehouse_id, field, old_val, new_val):
@@ -364,6 +427,7 @@ def _exec_transfer(db, user, params):
     inventree_service.sync_transfer(
         src.product_name, params["from_warehouse"], params["to_warehouse"], quantity
     )
+    _queue_operation(db, "transfer", params, user)
     return (
         f"Transferencia completada: {quantity} unidades de {src.product_name} "
         f"de {from_wh.name} a {to_wh.name}.",
@@ -401,6 +465,101 @@ def _exec_status_change(db, user, params):
         db.flush()
         inventree_service.sync_status_change(serial.product_name, params["warehouse_code"], params["new_status"])
         return f"Estado de {serial.product_name} (SN: {identifier}) cambiado a '{params['new_status']}'.", serial.id
+
+    raise ValueError(f"Producto '{identifier}' no encontrado en {wh.name}.")
+
+
+def _exec_sale(db, user, params):
+    wh = db.query(models.Warehouse).filter_by(code=params["warehouse_code"]).first()
+    if not wh:
+        raise ValueError(f"Almacén '{params['warehouse_code']}' no encontrado.")
+
+    identifier = params["product_identifier"]
+    qty = int(params.get("quantity", 1))
+    serial = params.get("serial_number", "")
+    price = float(params.get("unit_price", 0))
+    customer = params.get("customer_name", "")
+
+    # Venta de producto por cantidad
+    stock = (
+        db.query(models.Stock)
+        .filter(
+            models.Stock.warehouse_id == wh.id,
+            (models.Stock.product_code == identifier) | (models.Stock.product_name.ilike(f"%{identifier}%")),
+            models.Stock.status == "disponible",
+        )
+        .first()
+    )
+    if stock:
+        if stock.quantity < qty:
+            raise ValueError(
+                f"Stock insuficiente: {stock.product_name} tiene {stock.quantity} unidades. "
+                "Ten en cuenta que el producto puede no estar disponible."
+            )
+        old_qty = stock.quantity
+        stock.quantity -= qty
+        if stock.quantity == 0:
+            stock.status = "dado_de_baja"
+        _record_history(db, user, stock.id, "cantidad", wh.id, "quantity", old_qty, stock.quantity)
+        db.flush()
+
+        sale = models.Sale(
+            node_id=settings.node_id,
+            seller_id=user.id,
+            customer_name=customer,
+            product_code=stock.product_code,
+            product_name=stock.product_name,
+            warehouse_code=params["warehouse_code"],
+            quantity=qty,
+            unit_price=price if price else None,
+            total_price=price * qty if price else None,
+            notes=params.get("notes", ""),
+        )
+        db.add(sale)
+        db.flush()
+
+        inventree_service.sync_status_change(stock.product_name, params["warehouse_code"], "dado_de_baja" if stock.quantity == 0 else "disponible")
+        _queue_operation(db, "sale", params, user)
+
+        total_str = f" (Total: {price * qty:.2f}€)" if price else ""
+        return f"Venta registrada: {qty} {stock.unit} de {stock.product_name} a {customer}{total_str}.", sale.id
+
+    # Venta de producto serializado
+    if serial:
+        s_item = db.query(models.StockSerial).filter_by(
+            warehouse_id=wh.id, serial_number=serial, status="disponible"
+        ).first()
+        if not s_item:
+            raise ValueError(
+                f"Ítem serializado '{serial}' no disponible en {wh.name}. "
+                "Ten en cuenta que el producto puede no estar disponible."
+            )
+        old_status = s_item.status
+        s_item.status = "dado_de_baja"
+        _record_history(db, user, s_item.id, "serie_unica", wh.id, "status", old_status, "dado_de_baja")
+        db.flush()
+
+        sale = models.Sale(
+            node_id=settings.node_id,
+            seller_id=user.id,
+            customer_name=customer,
+            product_code=s_item.product_code,
+            product_name=s_item.product_name,
+            serial_number=serial,
+            warehouse_code=params["warehouse_code"],
+            quantity=1,
+            unit_price=price if price else None,
+            total_price=price if price else None,
+            notes=params.get("notes", ""),
+        )
+        db.add(sale)
+        db.flush()
+
+        inventree_service.sync_status_change(s_item.product_name, params["warehouse_code"], "dado_de_baja")
+        _queue_operation(db, "sale", params, user)
+
+        price_str = f" (Precio: {price:.2f}€)" if price else ""
+        return f"Venta registrada: {s_item.product_name} (SN: {serial}) a {customer}{price_str}.", sale.id
 
     raise ValueError(f"Producto '{identifier}' no encontrado en {wh.name}.")
 

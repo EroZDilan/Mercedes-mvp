@@ -63,7 +63,46 @@ def make_stock_write_tools(action_holder: dict) -> list:
         }
         return "ACCION_PROPUESTA"
 
-    return [propose_transfer, propose_status_change]
+    @tool("propose_sale")
+    def propose_sale(
+        product_identifier: str,
+        warehouse_code: str,
+        customer_name: str,
+        quantity: int = 1,
+        unit_price: float = 0.0,
+        serial_number: str = "",
+        notes: str = "",
+    ) -> str:
+        """Propone registrar una venta de un producto a un cliente.
+        Para productos serializados usar el número de serie directamente.
+        NO ejecuta nada — el usuario debe confirmar.
+
+        Args:
+            product_identifier: Código del producto (P001) o nombre del producto
+            warehouse_code: Código del almacén desde el que se vende (ALM-A, ALM-B)
+            customer_name: Nombre del cliente comprador
+            quantity: Cantidad vendida (default 1; para serializados siempre 1)
+            unit_price: Precio unitario en euros (0 si no aplica)
+            serial_number: Número de serie si es producto serializado (ej: SN-2041)
+            notes: Notas adicionales sobre la venta
+        """
+        if int(quantity) <= 0:
+            return "La cantidad debe ser mayor que cero."
+        action_holder["action"] = {
+            "action_type": "sale",
+            "params": {
+                "product_identifier": product_identifier,
+                "warehouse_code": warehouse_code.upper(),
+                "customer_name": customer_name,
+                "quantity": int(quantity),
+                "unit_price": float(unit_price),
+                "serial_number": serial_number,
+                "notes": notes,
+            },
+        }
+        return "ACCION_PROPUESTA"
+
+    return [propose_transfer, propose_status_change, propose_sale]
 
 
 def make_supervisor_write_tools(action_holder: dict) -> list:
