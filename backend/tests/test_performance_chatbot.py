@@ -42,8 +42,8 @@ THRESHOLDS = {
     "prompt_build_ms": 20,
     # Overhead del endpoint con LLM mockeado
     "endpoint_mock_ms": 400,
-    # TTFT aceptable con LLM real en CPU (Ollama local)
-    "ttft_acceptable_ms": 8_000,
+    # TTFT aceptable con LLM real en CPU (Ollama local, incluye cold start)
+    "ttft_acceptable_ms": 20_000,
     # Tiempo total de respuesta aceptable con LLM real
     "total_llm_acceptable_ms": 30_000,
 }

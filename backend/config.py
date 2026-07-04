@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     action_token_ttl_seconds: int = 60
 
-    whisper_model: str = "small"
+    whisper_model: str = "base"
     whisper_language: str = "es"
 
     database_url: str = "sqlite:///./stock_chatbot.db"
